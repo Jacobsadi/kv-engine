@@ -30,7 +30,7 @@ int main() {
         die("connect");
     }
 
-    char msg[] = "very";
+    char msg[] = "hello";
     write(fd, msg, strlen(msg));
 
     char rbuf[64] = {};

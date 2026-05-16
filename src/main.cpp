@@ -10,8 +10,17 @@
 #include <netinet/ip.h>
 
 int fd = socket(AF_INET, SOCK_STREAM, 0);
-int val = ;
+int val = 1;
 
+static void msg(const char *msg) {
+    fprintf(stderr, "%s\n", msg);
+}
+
+static void die(const char *msg) {
+    int err = errno;
+    fprintf(stderr, "[%d] %s\n", err, msg);
+    abort();
+}
 
 static void do_something(int connfd) {
     char rbuf[64] = {};
@@ -28,17 +37,17 @@ int main() {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
 
     int val = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADD, &val, sizeof(val));
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
 
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(1234);
     addr.sin_addr.s_addr = htonl(0);
-    int rv = bind(fd, (const strcut sockaddr *)&addr, sizeof(addr));
+    int rv = bind(fd, (const struct sockaddr *)&addr, sizeof(addr));
     if (rv) { die("bind()");}
 
     // listen 
-    rv = listen(fd, SOMAXCONN)
+    rv = listen(fd, SOMAXCONN);
 
     while(true) {
         struct sockaddr_in client_addr = {};
@@ -48,8 +57,8 @@ int main() {
             continue;
         }
         // do something wiht connection 
-        do_something(connfd)
-        close(connfd)
+        do_something(connfd);
+        close(connfd);
     }
-    return 0
+    return 0;
 }
