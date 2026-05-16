@@ -11,6 +11,19 @@
 
 int fd = socket(AF_INET, SOCK_STREAM, 0);
 int val = ;
+
+
+static void do_something(int connfd) {
+    char rbuf[64] = {};
+    ssize_t n = read(connfd, rbuf, sizeof(rbuf) - 1);
+    if(n < 0){
+        msg("read() error");
+        return;
+    }
+    printf("client sent: %s\n", rbuf);
+    char wbuf[] = "good";
+    write(connfd, wbuf, strlen(wbuf));
+}
 int main() {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -35,6 +48,7 @@ int main() {
             continue;
         }
         // do something wiht connection 
+        do_something(connfd)
         close(connfd)
     }
     return 0
