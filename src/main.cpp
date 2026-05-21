@@ -53,7 +53,7 @@ static write_all(int fd, const char *buf, size_t n){
 }
 
 static int32_t one_request(int connfd){
-    cahr rbuf[4 + k_max_msg];
+    char rbuf[4 + k_max_msg];
     errno = 0;
     int32_t err = read_full(connfd, &rbuf, 4);
     if(err) {
