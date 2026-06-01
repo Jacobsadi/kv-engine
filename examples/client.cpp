@@ -7,7 +7,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/ip.h>
-
+#include <assert.h>
 static void msg(const char *msg) {
     fprintf(stderr, "%s\n", msg);
 }
@@ -25,7 +25,7 @@ static int32_t read_full(int fd, char *buf, size_t n) {
         }
         assert((size_t)rv <= n);
         n -= (size_t)rv;
-        bf += rv;
+        buf += rv;
     }
     return 0;
 }
@@ -60,7 +60,7 @@ static int32_t query(int fd, const char *text){
 
     char rbuf[4 + k_max_msg];
     errno = 0;
-    int32_t err = read_full(fd, rbuf, 4);
+    err = read_full(fd, rbuf, 4);
     if(err){
         msg(errno == 0 ? "EOF" : "read() error");
         return -1;
@@ -72,7 +72,7 @@ static int32_t query(int fd, const char *text){
         return -1;
     }
     // reply body
-    err = read_full(fd, rbuf[4], len);
+    err = read_full(fd, rbuf + 4, len);
     if(err){
         msg("read() error");
         return err;
@@ -90,22 +90,16 @@ int main() {
 
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
-    addr.sin_port = ntohs(1234);
-    addr.sin_addr.s_addr = ntohl(INADDR_LOOPBACK);  // 127.0.0.1
+    addr.sin_port = htons(1234);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     int rv = connect(fd, (const struct sockaddr *)&addr, sizeof(addr));
     if (rv) {
         die("connect");
     }
 
-    char msg[] = "hello";
-    write(fd, msg, strlen(msg));
-
-    char rbuf[64] = {};
-    ssize_t n = read(fd, rbuf, sizeof(rbuf) - 1);
-    if (n < 0) {
-        die("read");
+    if (query(fd, "hello")) {
+        die("query");
     }
-    printf("server says: %s\n", rbuf);
     close(fd);
     return 0;
 }

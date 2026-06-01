@@ -9,7 +9,6 @@
 #include <sys/socket.h>
 #include <netinet/ip.h>
 
-int fd = socket(AF_INET, SOCK_STREAM, 0);
 int val = 1;
 
 static void msg(const char *msg) {
@@ -22,7 +21,7 @@ static void die(const char *msg) {
     abort();
 }
 
-const size_t k_max_msg = 4096
+const size_t k_max_msg = 4096;
 
 static int32_t read_full(int fd, char *buf, size_t n){
     while(n > 0) {
@@ -37,7 +36,7 @@ static int32_t read_full(int fd, char *buf, size_t n){
     return 0;
 }
 
-static write_all(int fd, const char *buf, size_t n){
+static int32_t write_all(int fd, const char *buf, size_t n){
     while(n > 0){    
         ssize_t rv = write(fd, buf, n);
         if(rv <= 0) {
@@ -55,7 +54,7 @@ static write_all(int fd, const char *buf, size_t n){
 static int32_t one_request(int connfd){
     char rbuf[4 + k_max_msg];
     errno = 0;
-    int32_t err = read_full(connfd, &rbuf, 4);
+    int32_t err = read_full(connfd, rbuf, 4);
     if(err) {
         msg(errno == 0 ? "EOF" : "read() error");
         return err;
@@ -73,18 +72,18 @@ static int32_t one_request(int connfd){
     err = read_full(connfd, &rbuf[4], len);
     if(err){
         msg("read() error");
-        return error
+        return err;
     }
     // do something
     fprintf(stderr, "client says: %.*s\n", len, &rbuf[4]);
 
     // reply 
     const char reply[] = "recieved";
-    char wbuf[4 + sizeof(len)];
+    char wbuf[4 + k_max_msg];
     len = (uint32_t)strlen(reply);
     memcpy(wbuf, &len, 4);
-    memcpy(&wbuf[4], reply, 4 + len);
-    return write_all(connfd, wbuf, 4 + len)
+    memcpy(&wbuf[4], reply, len);
+    return write_all(connfd, wbuf, 4 + len);
 
 }
 int main() {
