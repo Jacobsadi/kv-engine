@@ -84,21 +84,21 @@ static int32_t query(int fd, const char *text){
 
 int main() {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        die("socket()");
-    }
+    if (fd < 0) die("socket()");
 
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(1234);
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    int rv = connect(fd, (const struct sockaddr *)&addr, sizeof(addr));
-    if (rv) {
-        die("connect");
-    }
+    if (connect(fd, (const struct sockaddr *)&addr, sizeof(addr))) die("connect");
 
-    if (query(fd, "hello")) {
-        die("query");
+    char line[k_max_msg];
+    printf("> ");
+    while (fgets(line, sizeof(line), stdin)) {
+        line[strcspn(line, "\n")] = 0;
+        if (line[0] == 0) { printf("> "); continue; }
+        if (query(fd, line)) { die("query"); }
+        printf("> ");
     }
     close(fd);
     return 0;
