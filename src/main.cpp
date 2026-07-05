@@ -3,6 +3,7 @@
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <netinet/in.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -10,6 +11,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <sys/poll.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -17,8 +19,7 @@
 #include <fcntl.h>
 #include <vector>
 #include<poll.h>
-
-int val = 1;
+#include "buffer.h"
 struct Conn {
     int fd = -1;
     // application intention, for the event loop
@@ -26,8 +27,8 @@ struct Conn {
     bool want_write = false;
     bool want_close = false;
     // buffered input and output
-    std::vector<uint8_t> incoming;
-    std::vector<uint8_t> outgoing;
+    Buffer incoming;
+    Buffer outgoing;
 };
 
 
@@ -64,44 +65,41 @@ static Conn *handle_accept(int fd) {
     Conn *conn = new Conn();
     conn->fd = connfd;
     conn->want_read = true; // read the first request 
+    buf_init(&conn->incoming, 64);
+    buf_init(&conn->outgoing, 64);
     return  conn;
 
 }
-// append to the back of the vector 
-static void buf_append(std::vector<uint8_t> &buf, const uint8_t *data, size_t len){
-    buf.insert(buf.end(), data, data + len);
-}
-static void buf_consume(std::vector<uint8_t> &buf, size_t n){
-    buf.erase(buf.begin(), buf.begin() + n);
-}
+
+
 static bool try_one_request(Conn *conn){
-    if(conn->incoming.size() < 4){
+    if(buf_size(&conn->incoming) < 4){
         return false;
     }
     uint32_t len = 0;
-    memcpy(&len, conn->incoming.data(), 4);
+    memcpy(&len, conn->incoming.data_begin, 4);
     if(len > k_max_msg){
         msg("too long");
         conn->want_close = true;
         return false;
     }
-    if(4 + len > conn->incoming.size()){
+    if(4 + len > buf_size(&conn->incoming)){
         return false;
     }
-    const uint8_t *request = &conn->incoming[4];
+    const uint8_t *request = conn->incoming.data_begin + 4;
     fprintf(stderr, "client says: %.*s\n", (int)len, request);
-    buf_append(conn->outgoing, (const uint8_t *)&len, 4);
-    buf_append(conn->outgoing, request, len);
+    buf_append(&conn->outgoing, (const uint8_t *)&len, 4);
+    buf_append(&conn->outgoing, request, len);
 
-    buf_consume(conn->incoming, 4 + len);
+    buf_consume(&conn->incoming, 4 + len);
 
     return true;
 
 }
 
 static void handle_write(Conn *conn){
-    assert(conn->outgoing.size() > 0);
-    ssize_t rv = write(conn->fd, conn->outgoing.data(), conn->outgoing.size());
+    assert(buf_size(&conn->outgoing) > 0);
+    ssize_t rv = write(conn->fd, conn->outgoing.data_begin, buf_size(&conn->outgoing));
     if (rv < 0 && errno == EAGAIN) {
         return; // actually not ready
     }
@@ -112,8 +110,8 @@ static void handle_write(Conn *conn){
     }
 
     //remove written data 
-    buf_consume(conn->outgoing, (size_t)rv);
-    if(conn->outgoing.size() == 0){
+    buf_consume(&conn->outgoing, (size_t)rv);
+    if(buf_size(&conn->outgoing) == 0){
         conn->want_read = true;
         conn->want_write = false;
     }
@@ -127,15 +125,18 @@ static void handle_read(Conn *conn){
         conn->want_close = true;
         return;
     }
+    if (rv < 0 && errno == EAGAIN) {
+        return;
+    }
     if(rv < 0){
         msg_errno("read() error");
         conn->want_close = true;
         return ;
     }
-    buf_append(conn->incoming, buf, (size_t)rv);
+    buf_append(&conn->incoming, buf, (size_t)rv);
     while (try_one_request(conn)) {}
 
-    if(conn->outgoing.size() > 0){
+    if(buf_size(&conn->outgoing) > 0){
         conn->want_read = false;
         conn->want_write = true;
     }
@@ -214,7 +215,7 @@ int main() {
             if(ready & POLL_IN){
                 assert(conn->want_read);
                 handle_read(conn);
-                if(conn->outgoing.size() > 0 && conn->want_write){
+                if(buf_size(&conn->outgoing) > 0 && conn->want_write){
                     handle_write(conn);
                 }
             }
@@ -225,6 +226,8 @@ int main() {
             if((ready & POLLERR) || conn->want_close){
                 (void)close(conn->fd);
                 fd2conn[conn->fd] = nullptr;
+                buf_free(&conn->incoming);
+                buf_free(&conn->outgoing);
                 delete conn;
 
             }
