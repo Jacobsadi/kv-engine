@@ -18,8 +18,11 @@
 #include <netinet/ip.h>
 #include <fcntl.h>
 #include <vector>
+#include <string>
 #include<poll.h>
+#include <map>
 #include "buffer.h"
+using namespace std;
 struct Conn {
     int fd = -1;
     // application intention, for the event loop
@@ -30,8 +33,16 @@ struct Conn {
     Buffer incoming;
     Buffer outgoing;
 };
+struct Response {
+    uint32_t status = 0;
+    vector<uint8_t> data;
+};
 
-
+enum {
+    RES_OK  = 0,
+    RES_ERR = 1,
+    RES_NX  = 2,
+};
 static void msg(const char *msg) {
     fprintf(stderr, "%s\n", msg);
 }
@@ -70,8 +81,68 @@ static Conn *handle_accept(int fd) {
     return  conn;
 
 }
+static bool read_u32(const uint8_t *&cur, const uint8_t *end, uint32_t &out){
+    if(cur + 4 > end){
+        return false;
+    }
+    memcpy(&out, cur, 4);
+    cur += 4;
+    return true;
+}
+static bool read_str(const uint8_t *&cur, const uint8_t *end, size_t n, string &out){
+    if(cur + n > end ){
+        return false;
+    }
+    out.assign(cur, cur + n);
+    cur += n;
+    return true;
+}
+static uint32_t parse_req(const uint8_t *req, size_t size, vector<string> &cmd ){
+    const uint8_t *end = req + size;
+    uint32_t nstr = 0;
+    if(!read_u32(req, end, nstr)){
+        return -1;
+    }
+    if(nstr > k_max_msg){
+        return -1;
+    }
+    while(cmd.size() < nstr){
+        uint32_t len = 0;
+        if(!read_u32(req, end, len)){            
+            return -1;
+        }
+        cmd.push_back(string());
+        if(!read_str(req, end, len, cmd.back())){
+            return -1;
+        }
+    }
+}
+// placeholder; implemented later
+static map<string, string> g_data;
+static void do_request(vector<string> &cmd, Response &out){
+    if(cmd.size() == 2 && cmd[0] == "get"){
+        auto it = g_data.find(cmd[1]);
+        if(it == g_data.end()){
+            out.status = RES_NX; // not found 
+            return;
+        }
+        const string &val = it->second;
+        out.data.assign(val.begin(), val.end());
 
-
+    }else if(cmd.size() == 3 && cmd[0] == "set"){
+        g_data[cmd[1]].swap(cmd[2]);
+    }else if(cmd.size() == 2 && cmd[0] == "del"){
+        g_data.erase(cmd[1]);
+    }else {
+        out.status = RES_ERR; // unrecognized command
+    }
+}
+static void make_response(const Response &resp, Buffer &out){
+    uint32_t resp_len = 4 + (uint32_t)resp.data.size();
+    buf_append(&out, (const uint8_t *)&resp_len, 4);
+    buf_append(&out, (const uint8_t *)&resp.status, 4);
+    buf_append(&out, resp.data.data(), resp.data.size());
+}
 static bool try_one_request(Conn *conn){
     if(buf_size(&conn->incoming) < 4){
         return false;
@@ -88,9 +159,19 @@ static bool try_one_request(Conn *conn){
     }
     const uint8_t *request = conn->incoming.data_begin + 4;
     fprintf(stderr, "client says: %.*s\n", (int)len, request);
-    buf_append(&conn->outgoing, (const uint8_t *)&len, 4);
-    buf_append(&conn->outgoing, request, len);
-
+    
+    // handle a request
+    // 1. Parse the command.
+    // 2. Process the command and generate a response.
+    // 3. Append the response to the output buffer.
+    vector<string> cmd;
+    if((parse_req(request, len, cmd) < 0)){
+        conn->want_close = true;
+        return false;
+    }
+    Response resp;
+    do_request(cmd, resp);
+    make_response(resp, conn->outgoing);
     buf_consume(&conn->incoming, 4 + len);
 
     return true;
@@ -165,7 +246,7 @@ int main() {
     while(true) {
         poll_args.clear();
         // put the listening sockets in the first position 
-        struct pollfd pfd = {fd, POLL_IN, 0};
+        struct pollfd pfd = {fd, POLLIN, 0};
         poll_args.push_back(pfd);
         // the rest are connection sockets
         for (Conn *conn : fd2conn){
@@ -174,10 +255,10 @@ int main() {
             }
             struct pollfd pfd = {conn->fd, POLLERR, 0};
             if(conn->want_read){
-                pfd.events |= POLL_IN;
+                pfd.events |= POLLIN;
             }
             if(conn->want_write){
-                pfd.events |= POLL_OUT;
+                pfd.events |= POLLOUT;
             }
             poll_args.push_back(pfd);
         }
@@ -212,14 +293,11 @@ int main() {
             }
 
             Conn *conn = fd2conn[poll_args[i].fd];
-            if(ready & POLL_IN){
+            if(ready & POLLIN){
                 assert(conn->want_read);
                 handle_read(conn);
-                if(buf_size(&conn->outgoing) > 0 && conn->want_write){
-                    handle_write(conn);
-                }
             }
-            if(ready & POLL_OUT){
+            if(ready & POLLOUT){
                 assert(conn->want_write);
                 handle_write(conn);
             }
