@@ -7,6 +7,7 @@
 #include <netinet/in.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include "hashtable.h"
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
@@ -22,7 +23,16 @@
 #include<poll.h>
 #include <map>
 #include "buffer.h"
+
+#define container_of(ptr, T, member) \
+    ((T *)( (char *)ptr - offsetof(T, member) ))
+
 using namespace std;
+struct Entry {
+    HNode node;
+    string key;
+    string val;
+};
 struct Conn {
     int fd = -1;
     // application intention, for the event loop
@@ -43,6 +53,13 @@ enum {
     RES_ERR = 1,
     RES_NX  = 2,
 };
+
+static bool entry_eq(HNode *lhs, HNode *rhs){
+    Entry *le = container_of(lhs, Entry, node);
+    Entry *re = container_of(rhs, Entry, node);
+    return le->key == re->key;
+}
+
 static void msg(const char *msg) {
     fprintf(stderr, "%s\n", msg);
 }
@@ -97,7 +114,7 @@ static bool read_str(const uint8_t *&cur, const uint8_t *end, size_t n, string &
     cur += n;
     return true;
 }
-static uint32_t parse_req(const uint8_t *req, size_t size, vector<string> &cmd ){
+static int32_t parse_req(const uint8_t *req, size_t size, vector<string> &cmd ){
     const uint8_t *end = req + size;
     uint32_t nstr = 0;
     if(!read_u32(req, end, nstr)){
@@ -116,25 +133,77 @@ static uint32_t parse_req(const uint8_t *req, size_t size, vector<string> &cmd )
             return -1;
         }
     }
+    return 0;
 }
 // placeholder; implemented later
-static map<string, string> g_data;
-static void do_request(vector<string> &cmd, Response &out){
-    if(cmd.size() == 2 && cmd[0] == "get"){
-        auto it = g_data.find(cmd[1]);
-        if(it == g_data.end()){
-            out.status = RES_NX; // not found 
-            return;
-        }
-        const string &val = it->second;
-        out.data.assign(val.begin(), val.end());
+static HMap g_data;
 
-    }else if(cmd.size() == 3 && cmd[0] == "set"){
-        g_data[cmd[1]].swap(cmd[2]);
-    }else if(cmd.size() == 2 && cmd[0] == "del"){
-        g_data.erase(cmd[1]);
-    }else {
-        out.status = RES_ERR; // unrecognized command
+static void do_get(vector<string> &cmd, Response &out){
+    Entry lookup;
+    lookup.key = cmd[1];
+    lookup.node.hcode = str_hash((uint8_t *)lookup.key.data(), lookup.key.size());
+
+
+    HNode *node = hm_lookup(&g_data, &lookup.node, &entry_eq);
+
+
+    if(!node){
+        out.status = RES_NX;
+        return;
+    }
+
+    Entry *e = container_of(node, Entry, node);
+    out.data.assign(e->val.begin(), e->val.end());
+    out.status = RES_OK;
+    return;
+}
+
+static void do_set(vector<string> &cmd, Response &out){
+    Entry find;
+    find.key = cmd[1];
+    find.node.hcode = str_hash((uint8_t *)find.key.data(), find.key.size());
+
+    HNode *node = hm_lookup(&g_data, &find.node, &entry_eq);
+
+    if(node){
+        Entry *e = container_of(node, Entry, node);
+        e->val = cmd[2];
+    } else {
+        Entry *e = new Entry();
+        e->key = cmd[1];
+        e->val = cmd[2];
+        e->node.hcode = find.node.hcode;
+        hm_insert(&g_data, &e->node);
+    }
+    out.status = RES_OK;
+}
+
+static void do_del(vector<string> &cmd, Response &out){
+    Entry find;
+    find.key = cmd[1];
+    find.node.hcode = str_hash((uint8_t *)find.key.data(), find.key.size());
+    
+    HNode *node = hm_delete(&g_data, &find.node, &entry_eq);
+
+    if(node){
+        Entry *e = container_of(node, Entry, node);
+        delete e;
+        out.status = RES_OK;
+    } else {
+        out.status = RES_NX;
+    }
+}
+
+
+static void do_request(std::vector<std::string> &cmd, Response &out) {
+    if (cmd.size() == 2 && cmd[0] == "get") {
+        do_get(cmd, out);
+    } else if (cmd.size() == 3 && cmd[0] == "set") {
+        do_set(cmd, out);
+    } else if (cmd.size() == 2 && cmd[0] == "del") {
+        do_del(cmd, out);
+    } else {
+        out.status = RES_ERR;
     }
 }
 static void make_response(const Response &resp, Buffer &out){
@@ -230,7 +299,7 @@ int main() {
 
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(1234);
+    addr.sin_port = htons(1235);
     addr.sin_addr.s_addr = htonl(0);
     int rv = bind(fd, (const struct sockaddr *)&addr, sizeof(addr));
     if (rv) { die("bind()");}
